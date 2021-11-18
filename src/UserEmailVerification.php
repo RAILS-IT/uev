@@ -611,7 +611,6 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     $skip_roles = $this->getSkipRoles();
 
     $query = $this->database->select(UserEmailVerificationInterface::VERIFICATION_TABLE_NAME, 'uev');
-    $query->join('users_field_data', 'ufd', 'uev.uid = ufd.uid');
 
     if ($skip_roles) {
       $query->leftJoin('user__roles', 'ur', 'ur.entity_id = uev.uid');
@@ -635,7 +634,6 @@ class UserEmailVerification implements UserEmailVerificationInterface {
 
       case 'block_account':
         $query->condition('uev.reminders', $num_reminders, '>=');
-        $query->condition('ufd.status', 1, '=');
         break;
 
       case 'reminders':

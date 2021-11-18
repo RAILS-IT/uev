@@ -6,11 +6,8 @@ use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\user\UserInterface;
-use Drupal\user_email_verification\Event\UserEmailVerificationEvents;
-use Drupal\user_email_verification\Event\UserEmailVerificationVerifyEvent;
 use Drupal\user_email_verification\UserEmailVerificationInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Email verificationVerify controller.
@@ -32,26 +29,16 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
   protected $time;
 
   /**
-   * The event dispatcher service.
-   *
-   * @var \Symfony\Component\EventDispatcher\EventDispatcherInterface
-   */
-  protected $eventDispatcher;
-
-  /**
    * Constructs a new object.
    *
    * @param \Drupal\user_email_verification\UserEmailVerificationInterface $user_email_verification_service
    *   User email verification helper service.
    * @param \Drupal\Component\Datetime\TimeInterface $datetime_time
    *   The time service.
-   * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $event_dispatcher
-   *   The event dispatcher service.
    */
-  public function __construct(UserEmailVerificationInterface $user_email_verification_service, TimeInterface $datetime_time, EventDispatcherInterface $event_dispatcher) {
+  public function __construct(UserEmailVerificationInterface $user_email_verification_service, TimeInterface $datetime_time) {
     $this->userEmailVerification = $user_email_verification_service;
     $this->time = $datetime_time;
-    $this->eventDispatcher = $event_dispatcher;
   }
 
   /**
@@ -60,8 +47,7 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
   public static function create(ContainerInterface $container) {
     return new static(
       $container->get('user_email_verification.service'),
-      $container->get('datetime.time'),
-      $container->get('event_dispatcher')
+      $container->get('datetime.time')
     );
   }
 
@@ -84,8 +70,8 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
 
     // User tries to use verification link that was expired.
     if ($current - $timestamp > $timeout) {
-      $this->messenger()->addError($this->t('Your verification link has expired, and your account has automatically been canceled. For assistance, please contact <a href="/help">L2 Help</a>.'));
-      return $this->redirect('<front>');
+      $this->messenger()->addError($this->t('Your verification link was expired. Request a new one using the form below.'));
+      return $this->redirect('user_email_verification.request');
     }
 
     $verification = $this->userEmailVerification->loadVerificationByUserId($uid);
@@ -93,8 +79,8 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
     // User tries to use verification link that doesn't belong to him
     // or link was created for user which doesn't exist.
     if (($this->currentUser()->isAuthenticated() && $this->currentUser()->id() != $uid) || !$verification) {
-      $this->messenger()->addError($this->t('Your verification link was created for a different email address. For assistance, please contact <a href="/help">L2 Help</a>.'));
-      return $this->redirect('<front>');
+      $this->messenger()->addError($this->t('Your verification link is incorrect. Request a new one using the form below.'));
+      return $this->redirect('user_email_verification.request');
     }
     // Email for requested user was already verified.
     if ($verification['verified']) {
@@ -108,31 +94,24 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
     if ($user instanceof UserInterface && $hashed_pass === $this->userEmailVerification->buildHmac($user->id(), $timestamp)) {
 
       $this->userEmailVerification->setEmailVerifiedByUserId($user->id());
-      $this->messenger()->addStatus($this->t('Thank you for verifying your email address.'));
+      $this->messenger()->addStatus($this->t('Thank you for verifying your Email address.'));
 
-      $event = new UserEmailVerificationVerifyEvent($user, $user->isBlocked());
-      $this->eventDispatcher->dispatch(UserEmailVerificationEvents::VERIFY, $event);
-
-      // If the user is considered as blocked, notify the administrator and the
-      // user. After it redirect to the front page.
-      if ($event->notifyAsBlocked()) {
+      if ($user->isBlocked()) {
         $this->userEmailVerification->sendVerifyBlockedMail($user);
-        $this->messenger()->addWarning($this->t('Your account was blocked before you were able to verify. For assistance, please contact <a href="/help">L2 Help</a>.'));
+        $this->messenger()->addWarning($this->t('Your account has been blocked before the verification of the Email. An administrator will make an audit and unblock your account if the reason for the blocking was the Email verification.'));
 
         return $this->redirect('<front>');
       }
-      // The user is already authenticated, redirect to the user profile.
       elseif ($this->currentUser()->isAuthenticated()) {
         return $this->redirect('entity.user.canonical', ['user' => $this->currentUser()->id()]);
       }
-      // Otherwise redirect to the front page.
       else {
         return $this->redirect('<front>');
       }
     }
 
-    $this->messenger()->addError($this->t('Your verification could not be processed. For assistance, please contact <a href="/help">L2 Help</a>.'));
-    return $this->redirect('<front>');
+    $this->messenger()->addError($this->t('Your verification link is incorrect. Request a new one using the form below.'));
+    return $this->redirect('user_email_verification.request');
   }
 
 }
