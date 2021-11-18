@@ -70,7 +70,7 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
 
     // User tries to use verification link that was expired.
     if ($current - $timestamp > $timeout) {
-      $this->messenger()->addError($this->t('Your verification link was expired. Request a new one using the form below.'));
+      $this->messenger()->addError($this->t('Your verification link has expired, and your account has automatically been canceled. For assistance, please contact <a href="/help">L2 Help</a>.'));
       return $this->redirect('user_email_verification.request');
     }
 
@@ -79,7 +79,7 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
     // User tries to use verification link that doesn't belong to him
     // or link was created for user which doesn't exist.
     if (($this->currentUser()->isAuthenticated() && $this->currentUser()->id() != $uid) || !$verification) {
-      $this->messenger()->addError($this->t('Your verification link is incorrect. Request a new one using the form below.'));
+      $this->messenger()->addError($this->t('Your verification link was created for a different email address. For assistance, please contact <a href="/help">L2 Help</a>.'));
       return $this->redirect('user_email_verification.request');
     }
     // Email for requested user was already verified.
@@ -94,11 +94,11 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
     if ($user instanceof UserInterface && $hashed_pass === $this->userEmailVerification->buildHmac($user->id(), $timestamp)) {
 
       $this->userEmailVerification->setEmailVerifiedByUserId($user->id());
-      $this->messenger()->addStatus($this->t('Thank you for verifying your Email address.'));
+      $this->messenger()->addStatus($this->t('Thank you for verifying your email address.'));
 
       if ($user->isBlocked()) {
         $this->userEmailVerification->sendVerifyBlockedMail($user);
-        $this->messenger()->addWarning($this->t('Your account has been blocked before the verification of the Email. An administrator will make an audit and unblock your account if the reason for the blocking was the Email verification.'));
+        $this->messenger()->addWarning($this->t('Your account was blocked before you were able to verify your email address. For assistance, please contact <a href="/help">L2 Help</a>.'));
 
         return $this->redirect('<front>');
       }
@@ -110,7 +110,7 @@ class UserEmailVerificationVerify extends ControllerBase implements ContainerInj
       }
     }
 
-    $this->messenger()->addError($this->t('Your verification link is incorrect. Request a new one using the form below.'));
+    $this->messenger()->addError($this->t('Your verification could not be processed. For assistance, please contact <a href="/help">L2 Help</a>.'));
     return $this->redirect('user_email_verification.request');
   }
 
