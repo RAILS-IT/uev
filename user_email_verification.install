@@ -5,6 +5,9 @@
  * The module installation functions.
  */
 
+use Drupal\Core\Database\Database;
+use Drupal\user_email_verification\UserEmailVerificationInterface;
+
 /**
  * Implements hook_install().
  */
@@ -27,6 +30,7 @@ function user_email_verification_install() {
       $query->values([
         'uid' => $uid,
         'verified' => $verified,
+        'state' => UserEmailVerificationInterface::STATE_APPROVED,
       ]);
     }
 
@@ -70,6 +74,13 @@ function user_email_verification_schema() {
         'unsigned' => TRUE,
         'default' => 0,
       ],
+      'state' => [
+        'type' => 'int',
+        'description' => 'Verification state: 0 - in progress, 1 - approved, 2 - blocked, 3 - deleted, 4 - on hold.',
+        'not null' => TRUE,
+        'unsigned' => TRUE,
+        'default' => 0,
+      ],
     ],
     'indexes' => [
       'inx_uid'      => ['uid'],
@@ -80,4 +91,49 @@ function user_email_verification_schema() {
   ];
 
   return $schema;
+}
+
+/**
+ * Adding `state` column to `user_email_verification` table.
+ */
+function user_email_verification_update_8001(&$sandbox) {
+
+  $schema = Database::getConnection()->schema();
+
+  $schema->addField(
+    'user_email_verification',
+    'state',
+    [
+      'type' => 'int',
+      'description' => 'Verification state: 0 - in progress, 1 - approved, 2 - blocked, 3 - deleted, 4 - on hold.',
+      'not null' => TRUE,
+      'unsigned' => TRUE,
+      'default' => 0,
+    ]
+  );
+
+}
+
+/**
+ * Set `state` column value for all approved users.
+ */
+function user_email_verification_update_8002(&$sandbox) {
+
+  $db = Database::getConnection();
+
+  $approved_uids = $db->select('user_email_verification', 'uev')
+    ->fields('uev', ['uid'])
+    ->condition('uev.verified', 0, '>')
+    ->orderBy('uev.uid', 'ASC')
+    ->execute()
+    ->fetchAllKeyed(0, 0);
+
+  if ($approved_uids) {
+    $db->update('user_email_verification')
+      ->condition('uid', array_values($approved_uids), 'IN')
+      ->fields([
+        'state' => UserEmailVerificationInterface::STATE_APPROVED,
+      ])
+      ->execute();
+  }
 }

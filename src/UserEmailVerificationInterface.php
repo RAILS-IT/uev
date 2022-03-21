@@ -30,6 +30,31 @@ interface UserEmailVerificationInterface {
   const QUEUE_DELETE_ACCOUNT_LIMIT = 10;
 
   /**
+   * Verification status: In progress (waiting for user email verification).
+   */
+  const STATE_IN_PROGRESS = 0;
+
+  /**
+   * Verification status: Approved (user email was verified).
+   */
+  const STATE_APPROVED = 1;
+
+  /**
+   * Verification status: Blocked (user account was blocked).
+   */
+  const STATE_BLOCKED = 2;
+
+  /**
+   * Verification status: Deleted (user account was deleted).
+   */
+  const STATE_DELETED = 3;
+
+  /**
+   * Verification status: On hold (some module modified the flow logic).
+   */
+  const STATE_ON_HOLD = 4;
+
+  /**
    * Return email validation interval.
    *
    * @return int
@@ -105,9 +130,39 @@ interface UserEmailVerificationInterface {
    * Checks is extended period enabled or no.
    *
    * @return bool
-   *   Is extended period enabled or no.
+   *   Is extended period enabled?
    */
   public function isExtendedPeriodEnabled();
+
+  /**
+   * Checks is automatic verification on account creation enabled.
+   *
+   * Email auto verification for accounts which were created
+   * by the users with "administer users" permission.
+   *
+   * @return bool
+   *   Is automatic verification on account creation enabled?
+   */
+  public function isCreationAutoVerificationAllowed();
+
+  /**
+   * Checks is automatic verification of blocked accounts enabled.
+   *
+   * Email auto verification when the user with "administer users"
+   * permission activates blocked user account.
+   *
+   * @return bool
+   *   Is automatic verification of blocked accounts enabled?
+   */
+  public function isUnblockAutoVerificationAllowed();
+
+  /**
+   * Checks should we delete user account on the end of extended interval.
+   *
+   * @return bool
+   *   Should we delete user account on the end of extended interval?
+   */
+  public function shouldUserAccountDeleteOnEndOfExtendedInterval();
 
   /**
    * Build a base-64 encoded sha-256 HMAC.
@@ -271,10 +326,12 @@ interface UserEmailVerificationInterface {
    *
    * @param string $name_or_email
    *   User name/login or email.
+   * @param bool $active_only
+   *   Whether to search for active users only.
    *
    * @return null|\Drupal\user\UserInterface
    *   Drupal user on success or NULL otherwise.
    */
-  public function getUserByNameOrEmail($name_or_email);
+  public function getUserByNameOrEmail($name_or_email, $active_only);
 
 }

@@ -16,6 +16,11 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\Url;
 use Drupal\Core\Utility\Token;
 use Drupal\user\UserInterface;
+use Drupal\user_email_verification\Event\UserEmailVerificationEvents;
+use Drupal\user_email_verification\Event\UserEmailVerificationBlockAccountEvent;
+use Drupal\user_email_verification\Event\UserEmailVerificationCreateVerificationEvent;
+use Drupal\user_email_verification\Event\UserEmailVerificationDeleteAccountEvent;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
  * User email verification helper service.
@@ -102,6 +107,20 @@ class UserEmailVerification implements UserEmailVerificationInterface {
   protected $languageManager;
 
   /**
+   * The factory for configuration objects.
+   *
+   * @var \Drupal\Core\Config\ConfigFactoryInterface
+   */
+  protected $configFactory;
+
+  /**
+   * The event dispatcher service.
+   *
+   * @var \Symfony\Component\EventDispatcher\EventDispatcherInterface
+   */
+  protected $eventDispatcher;
+
+  /**
    * Constructs a new DietService object.
    *
    * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
@@ -122,8 +141,21 @@ class UserEmailVerification implements UserEmailVerificationInterface {
    *   The current active user.
    * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
    *   The language manager.
+   * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $event_dispatcher
+   *   The event dispatcher service.
    */
-  public function __construct(EntityTypeManagerInterface $entity_type_manager, Connection $database, ConfigFactoryInterface $config_factory, TimeInterface $datetime_time, QueueFactory $queue, MailManagerInterface $mail_manager, Token $token, AccountProxyInterface $current_user, LanguageManagerInterface $language_manager) {
+  public function __construct(
+    EntityTypeManagerInterface $entity_type_manager,
+    Connection $database,
+    ConfigFactoryInterface $config_factory,
+    TimeInterface $datetime_time,
+    QueueFactory $queue,
+    MailManagerInterface $mail_manager,
+    Token $token,
+    AccountProxyInterface $current_user,
+    LanguageManagerInterface $language_manager,
+    EventDispatcherInterface $event_dispatcher
+  ) {
     $this->entityTypeManager = $entity_type_manager;
     $this->database = $database;
     $this->config = $config_factory->get('user_email_verification.settings');
@@ -135,6 +167,8 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     $this->token = $token;
     $this->currentUser = $current_user;
     $this->languageManager = $language_manager;
+    $this->configFactory = $config_factory;
+    $this->eventDispatcher = $event_dispatcher;
   }
 
   /**
@@ -176,28 +210,32 @@ class UserEmailVerification implements UserEmailVerificationInterface {
    * {@inheritdoc}
    */
   public function getMailSubject() {
-    return trim((string) $this->config->get('mail_subject'));
+    // Get configuration object directly from factory to have correct language.
+    return (string) $this->configFactory->get('user_email_verification.settings')->get('mail_subject');
   }
 
   /**
    * {@inheritdoc}
    */
   public function getMailBody() {
-    return trim((string) $this->config->get('mail_body'));
+    // Get configuration object directly from factory to have correct language.
+    return (string) $this->configFactory->get('user_email_verification.settings')->get('mail_body');
   }
 
   /**
    * {@inheritdoc}
    */
   public function getExtendedMailSubject() {
-    return trim((string) $this->config->get('extended_mail_subject'));
+    // Get configuration object directly from factory to have correct language.
+    return (string) $this->configFactory->get('user_email_verification.settings')->get('extended_mail_subject');
   }
 
   /**
    * {@inheritdoc}
    */
   public function getExtendedMailBody() {
-    return trim((string) $this->config->get('extended_mail_body'));
+    // Get configuration object directly from factory to have correct language.
+    return (string) $this->configFactory->get('user_email_verification.settings')->get('extended_mail_body');
   }
 
   /**
@@ -205,6 +243,27 @@ class UserEmailVerification implements UserEmailVerificationInterface {
    */
   public function isExtendedPeriodEnabled() {
     return (bool) $this->config->get('extended_enable');
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function isCreationAutoVerificationAllowed() {
+    return !$this->config->get('no_creation_auto_verify');
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function isUnblockAutoVerificationAllowed() {
+    return !$this->config->get('no_unblock_auto_verify');
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function shouldUserAccountDeleteOnEndOfExtendedInterval() {
+    return (bool) $this->config->get('extended_end_delete_account');
   }
 
   /**
@@ -278,7 +337,10 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     return $this->database
       ->update(UserEmailVerificationInterface::VERIFICATION_TABLE_NAME)
       ->condition('uid', $uid, '=')
-      ->fields(['verified' => $this->time->getRequestTime()])
+      ->fields([
+        'verified' => $this->time->getRequestTime(),
+        'state' => UserEmailVerificationInterface::STATE_APPROVED,
+      ])
       ->execute();
   }
 
@@ -299,7 +361,19 @@ class UserEmailVerification implements UserEmailVerificationInterface {
       }
     }
 
-    if ($verify) {
+    if (
+      $this->currentUser->hasPermission('administer users') &&
+      $this->isCreationAutoVerificationAllowed()
+    ) {
+      $verified = $this->time->getRequestTime();
+    }
+
+    // Provide an ability to other modules to modify
+    // verified state (like auto-verify some specific users).
+    $event = new UserEmailVerificationCreateVerificationEvent($user, (bool) $verified);
+    $this->eventDispatcher->dispatch(UserEmailVerificationEvents::CREATE_VERIFICATION, $event);
+
+    if ($verify || $event->shouldBeVerified()) {
       $verified = $this->time->getRequestTime();
     }
 
@@ -310,6 +384,9 @@ class UserEmailVerification implements UserEmailVerificationInterface {
         'verified' => $verified,
         'last_reminder' => $this->time->getRequestTime(),
         'reminders' => 0,
+        'state' => $verified
+        ? UserEmailVerificationInterface::STATE_APPROVED
+        : UserEmailVerificationInterface::STATE_IN_PROGRESS,
       ])
       ->execute();
   }
@@ -379,20 +456,36 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     $user = $this->entityTypeManager->getStorage('user')->load($uid);
 
     // If the account exists and is active, it should be blocked.
-    if ($user instanceof UserInterface && $user->isActive()) {
-      $user->block()->save();
+    if ($user instanceof UserInterface) {
 
-      if ($this->isExtendedPeriodEnabled()) {
-        // If extended verification period is enabled - send Email to user
-        // with a link which lets user to activate and verify the account
-        // within defined time period.
-        $this->mailManager->mail(
-          'user_email_verification',
-          'verify_extended',
-          $user->getEmail(),
-          $user->getPreferredLangcode(),
-          ['user' => $user]
-        );
+      // Provide an ability to other modules to act before
+      // account block (like prevent some accounts block).
+      $event = new UserEmailVerificationBlockAccountEvent($user, $user->isActive());
+      $this->eventDispatcher->dispatch(UserEmailVerificationEvents::BLOCK_ACCOUNT, $event);
+
+      if ($event->shouldBeBlocked()) {
+        $user->block()->save();
+
+        $this->setVerificationState($user->id(), UserEmailVerificationInterface::STATE_BLOCKED);
+
+        if ($this->isExtendedPeriodEnabled()) {
+          // If extended verification period is enabled - send Email to user
+          // with a link which lets user to activate and verify the account
+          // within defined time period.
+          $this->mailManager->mail(
+            'user_email_verification',
+            'verify_extended',
+            $user->getEmail(),
+            $user->getPreferredLangcode(),
+            ['user' => $user]
+          );
+        }
+      }
+      else {
+        // Some third party module modified the flow logic
+        // (through the BLOCK_ACCOUNT event) - set "On hold"
+        // state to prevent circular user account blocking.
+        $this->setVerificationState($user->id(), UserEmailVerificationInterface::STATE_ON_HOLD);
       }
     }
 
@@ -466,16 +559,40 @@ class UserEmailVerification implements UserEmailVerificationInterface {
 
     if ($user instanceof UserInterface) {
 
-      // Notify account about cancellation.
-      _user_mail_notify('status_canceled', $user);
+      // Provide an ability to other modules to act before
+      // account delete (like prevent some accounts delete).
+      $event = new UserEmailVerificationDeleteAccountEvent($user, TRUE);
+      $this->eventDispatcher->dispatch(UserEmailVerificationEvents::DELETE_ACCOUNT, $event);
 
-      // Init user cancel process.
-      user_cancel([], $user->id(), $this->configUserSettings->get('cancel_method'));
+      if ($event->shouldBeDeleted()) {
+        $this->setVerificationState($user->id(), UserEmailVerificationInterface::STATE_DELETED);
 
-      // user_cancel() initiates a batch process. Run it manually.
-      $batch =& batch_get();
-      $batch['progressive'] = FALSE;
-      batch_process();
+        // Delete the user account only if this action was chosen.
+        if ($this->shouldUserAccountDeleteOnEndOfExtendedInterval()) {
+
+          // Notify account about cancellation.
+          _user_mail_notify('status_canceled', $user);
+
+          // Init user cancel process.
+          user_cancel([], $user->id(), $this->configUserSettings->get('cancel_method'));
+
+          // user_cancel() initiates a batch process. Run it manually.
+          $batch =& batch_get();
+          $batch['progressive'] = FALSE;
+          if (PHP_SAPI === 'cli' && function_exists('drush_backend_batch_process')) {
+            drush_backend_batch_process();
+          }
+          else {
+            batch_process();
+          }
+        }
+      }
+      else {
+        // Some third party module modified the flow logic
+        // (through the DELETE_ACCOUNT event) - set "On hold"
+        // state to prevent circular user account deletion.
+        $this->setVerificationState($user->id(), UserEmailVerificationInterface::STATE_ON_HOLD);
+      }
     }
   }
 
@@ -537,11 +654,19 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     /** @var \Drupal\user\UserInterface $user */
     $user = $params['user'];
 
+    // Care about correct configuration translation usage.
+    $language = $this->languageManager->getLanguage($user->getPreferredLangcode());
+    $original_language = $this->languageManager->getConfigOverrideLanguage();
+    $this->languageManager->setConfigOverrideLanguage($language);
+
+    $token_data = ['user' => $user];
+    $token_options = ['langcode' => $user->getPreferredLangcode(), 'clear' => TRUE];
+
     switch ($key) {
 
       case 'verify':
-        $message['subject'] = $this->token->replace((string) $this->getMailSubject(), ['user' => $user]);
-        $message['body'][] = $this->token->replace((string) $this->getMailBody(), ['user' => $user]);
+        $message['subject'] = $this->token->replace((string) $this->getMailSubject(), $token_data, $token_options);
+        $message['body'][] = $this->token->replace((string) $this->getMailBody(), $token_data, $token_options);
         break;
 
       case 'verify_blocked':
@@ -559,40 +684,38 @@ class UserEmailVerification implements UserEmailVerificationInterface {
         break;
 
       case 'verify_extended':
-        $message['subject'] = $this->token->replace((string) $this->getExtendedMailSubject(), ['user' => $user]);
-        $message['body'][] = $this->token->replace((string) $this->getExtendedMailBody(), ['user' => $user]);
+        $message['subject'] = $this->token->replace((string) $this->getExtendedMailSubject(), $token_data, $token_options);
+        $message['body'][] = $this->token->replace((string) $this->getExtendedMailBody(), $token_data, $token_options);
         break;
     }
+
+    $this->languageManager->setConfigOverrideLanguage($original_language);
   }
 
   /**
    * {@inheritdoc}
    */
-  public function getUserByNameOrEmail($name_or_email) {
+  public function getUserByNameOrEmail($name_or_email, $active_only = TRUE) {
 
     if (!$name_or_email) {
       return NULL;
     }
 
-    $users = $this->entityTypeManager
-      ->getStorage('user')
-      ->loadByProperties([
-        'mail' => $name_or_email,
-        'status' => 1,
-      ]);
+    $user_storage = $this->entityTypeManager->getStorage('user');
+    $query = $user_storage->getQuery();
+    $name_email_condition = $query->orConditionGroup()
+      ->condition('name', $name_or_email)
+      ->condition('mail', $name_or_email);
+    $query->condition($name_email_condition);
 
-    if ($users) {
-      return reset($users);
+    if ($active_only) {
+      $query->condition('status', 1);
     }
+    $uids = $query->execute();
 
-    $users = $this->entityTypeManager
-      ->getStorage('user')
-      ->loadByProperties([
-        'name' => $name_or_email,
-        'status' => 1,
-      ]);
+    $uid = reset($uids);
 
-    return $users ? reset($users) : NULL;
+    return $uid ? $user_storage->load($uid) : NULL;
   }
 
   /**
@@ -611,8 +734,6 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     $skip_roles = $this->getSkipRoles();
 
     $query = $this->database->select(UserEmailVerificationInterface::VERIFICATION_TABLE_NAME, 'uev');
-    $query->join('users_field_data', 'ufd', 'uev.uid = ufd.uid');
-
 
     if ($skip_roles) {
       $query->leftJoin('user__roles', 'ur', 'ur.entity_id = uev.uid');
@@ -635,22 +756,43 @@ class UserEmailVerification implements UserEmailVerificationInterface {
     switch ($reason) {
 
       case 'block_account':
+        $query->condition('uev.state', UserEmailVerificationInterface::STATE_IN_PROGRESS, '=');
         $query->condition('uev.reminders', $num_reminders, '>=');
-        $query->condition('ufd.status', 1, '=');
         break;
 
       case 'reminders':
+        $query->condition('uev.state', UserEmailVerificationInterface::STATE_IN_PROGRESS, '=');
         $query->condition('uev.reminders', $num_reminders, '<');
         break;
 
       case 'delete_account':
-        // Nothing to do.
+        // This condition prevents circular user delete attempts in case
+        // "When cancelling a user account" was set to
+        // "Disable the account and keep its content." or
+        // "Disable the account and un-publish its content.".
+        $query->condition('uev.state', UserEmailVerificationInterface::STATE_DELETED, '<>');
         break;
     }
 
     return $query
       ->execute()
       ->fetchAllKeyed(0, 0);
+  }
+
+  /**
+   * Set user account verification state.
+   *
+   * @param int $uid
+   *   User ID to change verification state for.
+   * @param int $state
+   *   State to set.
+   */
+  protected function setVerificationState($uid, $state) {
+    $this->database
+      ->update(UserEmailVerificationInterface::VERIFICATION_TABLE_NAME)
+      ->condition('uid', $uid, '=')
+      ->fields(['state' => $state])
+      ->execute();
   }
 
 }

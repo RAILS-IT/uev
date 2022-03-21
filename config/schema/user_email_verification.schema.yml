@@ -8,6 +8,12 @@ user_email_verification.settings:
       sequence:
         type: string
         label: 'User roles to skip'
+    no_creation_auto_verify:
+      type: boolean
+      label: 'Disable auto verification on account creation'
+    no_unblock_auto_verify:
+      type: boolean
+      label: 'Disable auto verification of blocked accounts on activation'
     validate_interval:
       type: integer
       label: 'Verification time interval'
@@ -22,7 +28,7 @@ user_email_verification.settings:
       label: 'Verification mail body'
     extended_enable:
       type: boolean
-      label: ''
+      label: 'Enable extended verification period'
     extended_validate_interval:
       type: integer
       label: 'Extended verification time interval'
@@ -32,6 +38,9 @@ user_email_verification.settings:
     extended_mail_body:
       type: text
       label: 'Extended verification mail body'
+    extended_end_delete_account:
+      type: boolean
+      label: 'Delete user account when "Extended verification time interval" ended'
 
 block.settings.user_email_verification_notification:
   type: block_settings

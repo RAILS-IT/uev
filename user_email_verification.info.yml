@@ -4,12 +4,12 @@ description: 'Verify the user Email. If the Email of the user is not verified th
 package: User
 
 core_version_requirement: ^8 || ^9
-configure: entity.user.admin_form
+configure: user_email_verification.settings_form
 
 dependencies:
   - drupal:user
 
-# Information added by Drupal.org packaging script on 2020-06-17
-version: '8.x-1.0'
+# Information added by Drupal.org packaging script on 2021-12-01
+version: '8.x-1.1'
 project: 'user_email_verification'
-datestamp: 1592399179
+datestamp: 1638362623

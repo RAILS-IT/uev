@@ -2,6 +2,7 @@
 
 namespace Drupal\user_email_verification\Form;
 
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Element\Email;
@@ -38,6 +39,13 @@ class UserEmailVerificationRequestForm extends FormBase {
   protected $request;
 
   /**
+   * The user.settings config object.
+   *
+   * @var \Drupal\Core\Config\Config
+   */
+  protected $configUserSettings;
+
+  /**
    * Constructs a new UserEmailVerificationRequestForm object.
    *
    * @param \Drupal\user_email_verification\UserEmailVerificationInterface $user_email_verification_service
@@ -46,12 +54,14 @@ class UserEmailVerificationRequestForm extends FormBase {
    *   The current active user.
    * @param \Symfony\Component\HttpFoundation\RequestStack $request_stack
    *   The request stack.
+   * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
+   *   The config factory.
    */
-  public function __construct(UserEmailVerificationInterface $user_email_verification_service, AccountProxyInterface $current_user, RequestStack $request_stack) {
-
+  public function __construct(UserEmailVerificationInterface $user_email_verification_service, AccountProxyInterface $current_user, RequestStack $request_stack, ConfigFactoryInterface $config_factory) {
     $this->userEmailVerification = $user_email_verification_service;
     $this->currentUser = $current_user;
     $this->request = $request_stack->getCurrentRequest();
+    $this->configUserSettings = $config_factory->get('user.settings');
   }
 
   /**
@@ -61,7 +71,8 @@ class UserEmailVerificationRequestForm extends FormBase {
     return new static(
       $container->get('user_email_verification.service'),
       $container->get('current_user'),
-      $container->get('request_stack')
+      $container->get('request_stack'),
+      $container->get('config.factory')
     );
   }
 
@@ -134,7 +145,8 @@ class UserEmailVerificationRequestForm extends FormBase {
     $name_or_email = trim($form_state->getValue('name', ''));
 
     if ($name_or_email) {
-      $user = $this->userEmailVerification->getUserByNameOrEmail($name_or_email);
+      $active_users_only = $this->configUserSettings->get('register') != UserInterface::REGISTER_VISITORS_ADMINISTRATIVE_APPROVAL;
+      $user = $this->userEmailVerification->getUserByNameOrEmail($name_or_email, $active_users_only);
 
       if ($user instanceof UserInterface) {
         $form_state->setValue('uid', $user->id());

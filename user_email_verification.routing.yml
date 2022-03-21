@@ -1,3 +1,11 @@
+user_email_verification.settings_form:
+  path: '/admin/config/people/user-email-verification'
+  defaults:
+    _form: '\Drupal\user_email_verification\Form\UserEmailVerificationSettingsForm'
+    _title: 'User email verification settings'
+  requirements:
+    _permission: 'manage user email verification settings'
+
 user_email_verification.request:
   path: '/user/user-email-verification'
   defaults:

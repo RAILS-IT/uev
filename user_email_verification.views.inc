@@ -49,7 +49,7 @@ function user_email_verification_views_data() {
       'id' => 'boolean',
     ],
     'filter' => [
-      'id' => 'boolean',
+      'id' => 'user_email_verification_verified',
       'label' => t('Is email verified.'),
     ],
     'argument' => [
@@ -80,6 +80,23 @@ function user_email_verification_views_data() {
   $data['user_email_verification']['reminders'] = [
     'title' => t('Reminders'),
     'help' => t('Number of reminders sent.'),
+    'field' => [
+      'id' => 'numeric',
+    ],
+    'filter' => [
+      'id' => 'numeric',
+    ],
+    'argument' => [
+      'id' => 'numeric',
+    ],
+    'sort' => [
+      'id' => 'standard',
+    ],
+  ];
+
+  $data['user_email_verification']['state'] = [
+    'title' => t('Verification state'),
+    'help' => t('Verification state: 0 - in progress, 1 - approved, 2 - blocked, 3 - deleted, 4 - on hold.'),
     'field' => [
       'id' => 'numeric',
     ],

@@ -6,8 +6,11 @@ use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\user\UserInterface;
+use Drupal\user_email_verification\Event\UserEmailVerificationEvents;
+use Drupal\user_email_verification\Event\UserEmailVerificationVerifyEvent;
 use Drupal\user_email_verification\UserEmailVerificationInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Email verificationVerify controller.
@@ -29,16 +32,26 @@ class UserEmailVerificationVerifyExtended extends ControllerBase implements Cont
   protected $time;
 
   /**
+   * The event dispatcher service.
+   *
+   * @var \Symfony\Component\EventDispatcher\EventDispatcherInterface
+   */
+  protected $eventDispatcher;
+
+  /**
    * Constructs a new object.
    *
    * @param \Drupal\user_email_verification\UserEmailVerificationInterface $user_email_verification_service
    *   User email verification helper service.
    * @param \Drupal\Component\Datetime\TimeInterface $datetime_time
    *   The time service.
+   * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $event_dispatcher
+   *   The event dispatcher service.
    */
-  public function __construct(UserEmailVerificationInterface $user_email_verification_service, TimeInterface $datetime_time) {
+  public function __construct(UserEmailVerificationInterface $user_email_verification_service, TimeInterface $datetime_time, EventDispatcherInterface $event_dispatcher) {
     $this->userEmailVerification = $user_email_verification_service;
     $this->time = $datetime_time;
+    $this->eventDispatcher = $event_dispatcher;
   }
 
   /**
@@ -47,7 +60,8 @@ class UserEmailVerificationVerifyExtended extends ControllerBase implements Cont
   public static function create(ContainerInterface $container) {
     return new static(
       $container->get('user_email_verification.service'),
-      $container->get('datetime.time')
+      $container->get('datetime.time'),
+      $container->get('event_dispatcher')
     );
   }
 
@@ -95,8 +109,11 @@ class UserEmailVerificationVerifyExtended extends ControllerBase implements Cont
       $this->userEmailVerification->setEmailVerifiedByUserId($user->id());
       $this->messenger()->addStatus($this->t('Thank you for verifying your Email address.'));
 
-      // Activate blocked account.
-      if ($user->isBlocked()) {
+      $event = new UserEmailVerificationVerifyEvent($user, $user->isBlocked());
+      $this->eventDispatcher->dispatch(UserEmailVerificationEvents::VERIFY_EXTENDED, $event);
+
+      // Activate blocked account if decided to un-block.
+      if ($event->notifyAsBlocked()) {
         $user->activate();
         $user->save();
 
